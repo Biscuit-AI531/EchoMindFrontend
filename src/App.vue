@@ -195,6 +195,13 @@ onMounted(() => {
   loadStats()
 })
 
+function createId() {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID()
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
 function switchBackend(type) {
   settings.backend = type
   persist()
@@ -212,7 +219,7 @@ function persist() {
 async function sendMessage() {
   const content = draft.value.trim()
   if (!content) return
-  messages.value.push({ id: crypto.randomUUID(), role: 'user', content })
+  messages.value.push({ id: createId(), role: 'user', content })
   draft.value = ''
   busy.value = true
   try {
@@ -228,14 +235,14 @@ async function sendMessage() {
       response.escalated ? '转人工' : ''
     ].filter(Boolean).join(' · ')
     messages.value.push({
-      id: crypto.randomUUID(),
+      id: createId(),
       role: 'assistant',
       content: response.response,
       meta
     })
   } catch (error) {
     messages.value.push({
-      id: crypto.randomUUID(),
+      id: createId(),
       role: 'assistant',
       content: error.message,
       meta: '请求失败'
