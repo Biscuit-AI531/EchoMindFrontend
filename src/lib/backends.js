@@ -16,7 +16,7 @@ const DEFAULT_BACKENDS = {
 export function createInitialSettings() {
   const saved = readSettings()
   return {
-    backend: saved.backend || 'java',
+    backend: saved.backend || import.meta.env.VITE_DEFAULT_BACKEND || 'python',
     userId: saved.userId || 'u1001',
     conversationId: saved.conversationId || '',
     endpoints: {
@@ -46,12 +46,28 @@ export async function requestMonitor(type, settings) {
   return requestJson(backendMeta(type, settings).baseUrl, '/monitor')
 }
 
+export async function requestSkills(type, settings) {
+  return requestJson(backendMeta(type, settings).baseUrl, '/skills')
+}
+
+export async function reloadSkills(type, settings) {
+  return requestJson(backendMeta(type, settings).baseUrl, '/skills/reload', { method: 'POST' })
+}
+
 export async function requestKnowledgeStats(type, settings) {
   return requestJson(backendMeta(type, settings).baseUrl, '/knowledge/stats')
 }
 
+export async function runEvaluation(type, settings, body = null) {
+  return requestJson(backendMeta(type, settings).baseUrl, '/eval/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined
+  })
+}
+
 export async function requestSearch(type, settings, query, topK = 5) {
-  const params = new URLSearchParams({ query, topK: String(topK) })
+  const params = new URLSearchParams({ query, top_k: String(topK) })
   return requestJson(backendMeta(type, settings).baseUrl, `/search?${params}`, { method: 'POST' })
 }
 
@@ -84,17 +100,10 @@ export async function uploadKnowledge(type, settings, file) {
 }
 
 function buildChatPayload(type, settings, message) {
-  if (type === 'python') {
-    return {
-      message,
-      user_id: settings.userId || 'anonymous',
-      conv_id: settings.conversationId || undefined
-    }
-  }
   return {
     message,
     user_id: settings.userId || 'anonymous',
-    conversation_id: settings.conversationId || undefined
+    conv_id: settings.conversationId || undefined
   }
 }
 
@@ -104,7 +113,16 @@ function normalizeChatResponse(type, raw) {
     conversationId: raw.conversation_id || raw.conversationId || raw.conv_id || '',
     response: raw.response || '',
     intent: raw.intent || 'other',
+    intentGroup: raw.intent_group || raw.intentGroup || 'other',
     agentType: raw.agent_type || raw.agentType || '',
+    agentTypes: raw.agent_types || raw.agentTypes || [],
+    primaryAgent: raw.primary_agent || raw.primaryAgent || '',
+    supportingAgents: raw.supporting_agents || raw.supportingAgents || [],
+    routingReason: raw.routing_reason || raw.routingReason || '',
+    routingConfidence: Number(raw.routing_confidence ?? raw.routingConfidence ?? 0),
+    entities: raw.entities || {},
+    intentConfidence: Number(raw.intent_confidence ?? raw.intentConfidence ?? 0),
+    intentSourceScores: raw.intent_source_scores || raw.intentSourceScores || {},
     escalated: Boolean(raw.escalated),
     latencyMs: Number(raw.latency_ms ?? raw.latencyMs ?? 0),
     knowledgeUsed: Boolean(raw.knowledge_used ?? raw.knowledgeUsed),
