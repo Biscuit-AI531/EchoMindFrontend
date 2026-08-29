@@ -5,7 +5,7 @@
 项目目录：
 
 ```text
-/Users/xiao_xiong/Desktop/code/EchoMindFrontend
+./EchoMindFrontend
 ```
 
 ## 功能
@@ -67,6 +67,14 @@ npm run dev
 
 ```bash
 docker compose up -d --build
+```
+
+前提是 `EchoMindFrontend` 的父目录下有这三个目录：
+
+```text
+../EchoMind
+../EchoMindJava
+./
 ```
 
 访问前端：
