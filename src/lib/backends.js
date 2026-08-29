@@ -2,13 +2,13 @@ const DEFAULT_BACKENDS = {
   python: {
     id: 'python',
     label: 'Python',
-    baseUrl: import.meta.env.VITE_PYTHON_API_URL || '/api/python',
+    baseUrl: runtimeConfig().pythonApiUrl || import.meta.env.VITE_PYTHON_API_URL || '/api/python',
     port: '8000'
   },
   java: {
     id: 'java',
     label: 'Java',
-    baseUrl: import.meta.env.VITE_JAVA_API_URL || '/api/java',
+    baseUrl: runtimeConfig().javaApiUrl || import.meta.env.VITE_JAVA_API_URL || '/api/java',
     port: '8080'
   }
 }
@@ -82,6 +82,12 @@ export async function requestChat(type, settings, message) {
   return normalizeChatResponse(type, raw)
 }
 
+export async function requestToolTrace(type, settings, requestId) {
+  if (!requestId) return null
+  const raw = await requestJson(backendMeta(type, settings).baseUrl, `/trace/tool/${encodeURIComponent(requestId)}`)
+  return normalizeToolTraceResponse(raw)
+}
+
 export async function addKnowledge(type, settings, documents) {
   return requestJson(backendMeta(type, settings).baseUrl, '/knowledge/add', {
     method: 'POST',
@@ -111,6 +117,7 @@ function normalizeChatResponse(type, raw) {
   return {
     backend: type,
     conversationId: raw.conversation_id || raw.conversationId || raw.conv_id || '',
+    requestId: raw.request_id || raw.requestId || '',
     response: raw.response || '',
     intent: raw.intent || 'other',
     intentGroup: raw.intent_group || raw.intentGroup || 'other',
@@ -128,6 +135,20 @@ function normalizeChatResponse(type, raw) {
     knowledgeUsed: Boolean(raw.knowledge_used ?? raw.knowledgeUsed),
     verified: raw.verified,
     grounded: raw.grounded,
+    raw
+  }
+}
+
+function normalizeToolTraceResponse(raw) {
+  const trace = raw?.trace || {}
+  return {
+    requestId: raw?.request_id || raw?.requestId || '',
+    found: Boolean(raw?.found),
+    trace: {
+      ...trace,
+      toolsUsed: trace.tools_used || trace.toolsUsed || [],
+      toolCalls: trace.tool_calls || trace.toolCalls || []
+    },
     raw
   }
 }
@@ -159,4 +180,9 @@ function readSettings() {
   } catch {
     return {}
   }
+}
+
+function runtimeConfig() {
+  if (typeof window === 'undefined') return {}
+  return window.__ECHOMIND_CONFIG__ || {}
 }

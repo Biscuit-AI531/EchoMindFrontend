@@ -4,8 +4,11 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: echomind-frontend
+    environment:
+      PYTHON_API_URL: ${PYTHON_API_URL:-http://host.docker.internal:8000/api/python}
+      JAVA_API_URL: ${JAVA_API_URL:-http://host.docker.internal:8080/api/java}
     ports:
-      - "5174:80"
+      - "${FRONTEND_PORT:-5174}:80"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped

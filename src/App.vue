@@ -1,5 +1,5 @@
 <template>
-  <main class="app-shell">
+  <main :class="['app-shell', `app-shell-${activeView}`]">
     <header class="topbar">
       <a class="brand" href="#" aria-label="EchoMind 首页" @click.prevent="activeView = 'chat'">
         <span class="brand-mark">E</span>
@@ -26,7 +26,7 @@
 
     <section v-if="activeView === 'chat'" class="page page-chat">
       <div class="page-heading">
-        <div>
+        <div class="heading-copy">
           <span class="kicker">Conversation lab</span>
           <h1>和客服 Agent 对话</h1>
           <p>发送一条真实请求，查看它如何识别意图、选择 Agent 并生成回复。</p>
@@ -54,6 +54,25 @@
                 <small v-if="item.meta">{{ item.meta }}</small>
               </div>
               <p>{{ item.content }}</p>
+              <div v-if="item.trace" class="message-trace">
+                <div class="trace-head">
+                  <span>工具调用</span>
+                  <small v-if="item.trace.requestId">#{{ item.trace.requestId }}</small>
+                </div>
+                <div v-if="item.trace.toolCalls?.length" class="trace-calls">
+                  <details v-for="(call, index) in item.trace.toolCalls" :key="`${item.id}-${index}`" open>
+                    <summary>
+                      <strong>{{ call.tool_name || 'unknown_tool' }}</strong>
+                      <span>{{ call.success ? '成功' : '失败' }}</span>
+                    </summary>
+                    <pre>{{ formatJson(call.input || {}) }}</pre>
+                  </details>
+                </div>
+                <div v-else class="trace-empty-block">
+                  <p>本次请求已生成 trace，但没有可展示的工具输入。</p>
+                  <p v-if="item.trace.toolsUsed?.length" class="trace-note">已调用：{{ item.trace.toolsUsed.join(' · ') }}</p>
+                </div>
+              </div>
             </article>
 
             <div v-if="messages.length === 0" class="empty-state">
@@ -83,84 +102,120 @@
           </form>
         </section>
 
-        <aside class="chat-sidebar">
-          <section class="side-card connection-card">
-            <div class="card-heading">
-              <div>
-                <span class="kicker">Connection</span>
-                <h2>连接配置</h2>
+        <aside class="chat-sidebar" ref="sidebarRef">
+          <div class="chat-sidebar-scroll">
+            <section class="side-card session-card">
+              <div class="card-heading">
+                <div>
+                  <span class="kicker">Session</span>
+                  <h2>会话信息</h2>
+                </div>
+                <span class="status-copy muted">{{ settings.conversationId ? '已启用' : '新会话' }}</span>
               </div>
-              <span class="status-copy" :class="healthOk ? 'success' : 'muted'">{{ healthLabel }}</span>
-            </div>
-
-            <div class="backend-tabs">
-              <button :class="{ active: settings.backend === 'java' }" @click="switchBackend('java')">Java</button>
-              <button :class="{ active: settings.backend === 'python' }" @click="switchBackend('python')">Python</button>
-            </div>
-
-            <label>
-              <span>用户 ID</span>
-              <input v-model="settings.userId" @change="persist" placeholder="u1001" />
-            </label>
-            <label>
-              <span>会话 ID</span>
-              <input v-model="settings.conversationId" @change="persist" placeholder="自动生成" />
-            </label>
-            <div class="side-actions">
-              <button @click="checkHealth">检查连接</button>
-              <button class="quiet-button" @click="refreshConsole">刷新</button>
-            </div>
-          </section>
-
-          <section class="side-card trace-card">
-            <div class="card-heading">
-              <div>
-                <span class="kicker">Last trace</span>
-                <h2>最近一次请求</h2>
+              <div class="session-grid">
+                <div>
+                  <span>会话 ID</span>
+                  <strong>{{ settings.conversationId || '自动生成' }}</strong>
+                </div>
+                <div>
+                  <span>用户 ID</span>
+                  <strong>{{ settings.userId || 'anonymous' }}</strong>
+                </div>
               </div>
-              <span class="trace-status" :class="lastResponse ? 'has-data' : ''"></span>
-            </div>
+            </section>
 
-            <div v-if="lastResponse" class="trace-body">
-              <div class="latency">
-                <span>响应耗时</span>
-                <strong>{{ lastResponse.latencyMs || '-' }}<small> ms</small></strong>
+            <section class="side-card connection-card">
+              <div class="card-heading">
+                <div>
+                  <span class="kicker">Connection</span>
+                  <h2>连接配置</h2>
+                </div>
+                <span class="status-copy" :class="healthOk ? 'success' : 'muted'">{{ healthLabel }}</span>
               </div>
-              <dl class="detail-list">
-                <div><dt>主 Agent</dt><dd>{{ lastResponse.primaryAgent || lastResponse.agentType || '-' }}</dd></div>
-                <div><dt>意图</dt><dd>{{ lastResponse.intent || '-' }}</dd></div>
-                <div><dt>置信度</dt><dd>{{ formatPercent(lastResponse.routingConfidence) }}</dd></div>
-                <div><dt>知识库</dt><dd :class="lastResponse.knowledgeUsed ? 'success' : 'muted'">{{ lastResponse.knowledgeUsed ? '已使用' : '未使用' }}</dd></div>
-                <div><dt>转人工</dt><dd :class="lastResponse.escalated ? 'danger' : 'muted'">{{ lastResponse.escalated ? '是' : '否' }}</dd></div>
-              </dl>
-              <p v-if="lastResponse.routingReason" class="routing-reason">{{ lastResponse.routingReason }}</p>
-            </div>
-            <p v-else class="side-empty">发送消息后，这里会显示 Agent 路由、意图和耗时。</p>
-          </section>
 
-          <section class="side-card monitor-card">
-            <div class="card-heading">
-              <div>
-                <span class="kicker">Runtime</span>
-                <h2>运行状态</h2>
+              <div class="backend-tabs">
+                <button :class="{ active: settings.backend === 'java' }" @click="switchBackend('java')">Java</button>
+                <button :class="{ active: settings.backend === 'python' }" @click="switchBackend('python')">Python</button>
               </div>
-              <button class="link-button" @click="loadMonitor">刷新</button>
-            </div>
-            <div class="mini-stats">
-              <div><strong>{{ totalRequests }}</strong><span>请求</span></div>
-              <div><strong>{{ agentCount }}</strong><span>Agent</span></div>
-              <div><strong>{{ activeAlerts.length }}</strong><span>告警</span></div>
-            </div>
-            <div v-if="activeAlerts.length" class="alert-note">{{ activeAlerts[0].detail || activeAlerts[0].title }}</div>
-            <p v-else class="healthy-note">当前没有活跃告警。</p>
-          </section>
+
+              <label>
+                <span>用户 ID</span>
+                <input v-model="settings.userId" @change="persist" placeholder="u1001" />
+              </label>
+              <label>
+                <span>会话 ID</span>
+                <input v-model="settings.conversationId" @change="persist" placeholder="自动生成" />
+              </label>
+              <div class="side-actions">
+                <button @click="checkHealth">检查连接</button>
+                <button class="quiet-button" @click="refreshConsole">刷新</button>
+              </div>
+            </section>
+
+            <section class="side-card trace-card">
+              <div class="card-heading">
+                <div>
+                  <span class="kicker">Last trace</span>
+                  <h2>最近一次请求</h2>
+                </div>
+                <span class="trace-status" :class="lastResponse ? 'has-data' : ''"></span>
+              </div>
+
+              <div v-if="lastResponse" class="trace-body">
+                <div class="latency">
+                  <span>响应耗时</span>
+                  <strong>{{ lastResponse.latencyMs || '-' }}<small> ms</small></strong>
+                </div>
+                <dl class="detail-list">
+                  <div><dt>主 Agent</dt><dd>{{ lastResponse.primaryAgent || lastResponse.agentType || '-' }}</dd></div>
+                  <div><dt>意图</dt><dd>{{ lastResponse.intent || '-' }}</dd></div>
+                  <div><dt>置信度</dt><dd>{{ formatPercent(lastResponse.routingConfidence) }}</dd></div>
+                  <div><dt>知识库</dt><dd :class="lastResponse.knowledgeUsed ? 'success' : 'muted'">{{ lastResponse.knowledgeUsed ? '已使用' : '未使用' }}</dd></div>
+                  <div><dt>转人工</dt><dd :class="lastResponse.escalated ? 'danger' : 'muted'">{{ lastResponse.escalated ? '是' : '否' }}</dd></div>
+                </dl>
+                <p v-if="lastResponse.routingReason" class="routing-reason">{{ lastResponse.routingReason }}</p>
+                <div v-if="lastTrace?.trace" class="trace-call-list">
+                  <div class="trace-call-title">工具调用</div>
+                  <div v-for="(call, index) in lastTrace.trace.toolCalls" :key="`${call.tool_use_id || index}`" class="trace-call-item">
+                    <div class="trace-call-meta">
+                      <strong>{{ call.tool_name || 'unknown_tool' }}</strong>
+                      <span>{{ call.latency_ms || 0 }} ms</span>
+                    </div>
+                    <pre>{{ formatJson(call.input || {}) }}</pre>
+                  </div>
+                  <div v-if="!lastTrace.trace.toolCalls?.length" class="trace-empty-block">
+                    <p>这次 trace 没有记录到工具输入。</p>
+                    <p v-if="lastTrace.trace.toolsUsed?.length" class="trace-note">已调用：{{ lastTrace.trace.toolsUsed.join(' · ') }}</p>
+                  </div>
+                </div>
+              </div>
+              <p v-else class="side-empty">发送消息后，这里会显示 Agent 路由、意图和耗时。</p>
+            </section>
+
+            <section class="side-card monitor-card">
+              <div class="card-heading">
+                <div>
+                  <span class="kicker">Runtime</span>
+                  <h2>运行状态</h2>
+                </div>
+                <button class="link-button" @click="loadMonitor">刷新</button>
+              </div>
+              <div class="mini-stats">
+                <div><strong>{{ totalRequests }}</strong><span>请求</span></div>
+                <div><strong>{{ agentCount }}</strong><span>Agent</span></div>
+                <div><strong>{{ activeAlerts.length }}</strong><span>告警</span></div>
+              </div>
+              <div v-if="activeAlerts.length" class="alert-note">{{ activeAlerts[0].detail || activeAlerts[0].title }}</div>
+              <p v-else class="healthy-note">当前没有活跃告警。</p>
+            </section>
+          </div>
         </aside>
       </div>
     </section>
 
     <section v-else-if="activeView === 'knowledge'" class="page page-knowledge">
       <div class="page-heading">
-        <div>
+        <div class="heading-copy">
           <span class="kicker">Knowledge operations</span>
           <h1>知识库</h1>
           <p>搜索、补充和维护客服 Agent 使用的知识片段。</p>
@@ -220,7 +275,7 @@
 
     <section v-else class="page page-evaluation">
       <div class="page-heading">
-        <div>
+        <div class="heading-copy">
           <span class="kicker">Evaluation lab</span>
           <h1>评测 Agent</h1>
           <p>运行 FastAPI 内置评测，查看意图识别、对话质量和回归结果。</p>
@@ -255,7 +310,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   addKnowledge,
   backendMeta,
@@ -266,6 +321,7 @@ import {
   requestKnowledgeStats,
   requestMonitor,
   requestSearch,
+  requestToolTrace,
   requestSkills,
   runEvaluation as requestEvaluation,
   saveSettings,
@@ -286,13 +342,16 @@ const searchResults = ref([])
 const docTitle = ref('退款补充政策')
 const docContent = ref('大促期间退款审核时间可能延长到 3-5 个工作日。')
 const messageList = ref(null)
+const sidebarRef = ref(null)
 const monitorData = ref({ agent_stats: {}, tool_stats: {}, active_alerts: [], suggestions: [] })
 const skillsData = ref({ count: 0, skills: [], errors: [] })
 const lastResponse = ref(null)
+const lastTrace = ref(null)
 const evalData = ref(null)
 const toast = ref('')
 let toastTimer
 let messageSequence = 0
+let sidebarObserver
 
 const currentBackend = computed(() => backendMeta(settings.backend, settings))
 const docsUrl = computed(() => `${currentBackend.value.baseUrl}/docs`)
@@ -302,9 +361,30 @@ const agentCount = computed(() => Object.keys(monitorData.value.agent_stats || {
 const totalRequests = computed(() => Object.values(monitorData.value.agent_stats || {}).reduce((sum, item) => sum + Number(item.total || 0), 0))
 
 watch(() => settings.conversationId, persist)
-onMounted(refreshConsole)
+onMounted(() => {
+  refreshConsole()
+  updateSidebarHeight()
+  if (typeof ResizeObserver !== 'undefined') {
+    sidebarObserver = new ResizeObserver(updateSidebarHeight)
+    if (sidebarRef.value) sidebarObserver.observe(sidebarRef.value)
+  }
+  window.addEventListener('resize', updateSidebarHeight)
+})
+
+onBeforeUnmount(() => {
+  sidebarObserver?.disconnect?.()
+  window.removeEventListener('resize', updateSidebarHeight)
+})
 
 function persist() { saveSettings(settings) }
+
+function updateSidebarHeight() {
+  const sidebar = sidebarRef.value
+  if (!sidebar) return
+  const rect = sidebar.getBoundingClientRect()
+  const height = Math.max(320, Math.floor(rect.height))
+  sidebar.style.setProperty('--sidebar-height', `${height}px`)
+}
 
 function switchBackend(type) {
   settings.backend = type
@@ -314,6 +394,7 @@ function switchBackend(type) {
   messages.value = []
   searchResults.value = []
   lastResponse.value = null
+  lastTrace.value = null
   refreshConsole()
 }
 
@@ -401,8 +482,9 @@ async function sendMessage() {
       persist()
     }
     lastResponse.value = response
+    lastTrace.value = await loadToolTrace(response.requestId)
     const meta = [response.intent, response.primaryAgent || response.agentType, response.knowledgeUsed ? 'RAG' : '', response.escalated ? '转人工' : ''].filter(Boolean).join(' · ')
-    messages.value.push({ id: createMessageId(), role: 'assistant', content: response.response, meta })
+    messages.value.push({ id: createMessageId(), role: 'assistant', content: response.response, meta, trace: lastTrace.value?.trace || null })
     await loadMonitor()
   } catch (error) {
     messages.value.push({ id: createMessageId(), role: 'assistant', content: error.message, meta: '请求失败' })
@@ -418,6 +500,7 @@ function usePrompt(prompt) { draft.value = prompt }
 function clearConversation() {
   messages.value = []
   lastResponse.value = null
+  lastTrace.value = null
   settings.conversationId = ''
   persist()
 }
@@ -474,9 +557,25 @@ async function runEvaluation() {
   } finally { busy.value = false }
 }
 
+async function loadToolTrace(requestId) {
+  try {
+    return await requestToolTrace(settings.backend, settings, requestId)
+  } catch {
+    return null
+  }
+}
+
 function formatPercent(value) {
   const number = Number(value || 0)
   return `${(number <= 1 ? number * 100 : number).toFixed(1)}%`
+}
+
+function formatJson(value) {
+  try {
+    return JSON.stringify(value ?? {}, null, 2)
+  } catch {
+    return String(value ?? '')
+  }
 }
 
 function createMessageId() {

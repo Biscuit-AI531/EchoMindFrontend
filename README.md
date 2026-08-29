@@ -31,7 +31,7 @@
 | `/api/python` | `http://localhost:8000` |
 | `/api/java` | `http://localhost:8080` |
 
-Docker 模式下，Nginx 会通过 `host.docker.internal` 访问宿主机上的 Python / Java 服务。
+Docker 模式下，Nginx 会通过运行时注入的地址访问后端。默认仍指向宿主机上的 Python / Java 服务。
 
 ## 本地运行
 
@@ -63,15 +63,18 @@ npm run dev
 
 ## Docker 部署
 
-先构建前端静态文件：
+直接构建并启动容器：
 
 ```bash
-npm run build
+docker compose up -d --build
 ```
 
-再构建并启动容器：
+如需自定义后端地址：
 
 ```bash
+PYTHON_API_URL=http://your-server:8000/api/python \
+JAVA_API_URL=http://your-server:8080/api/java \
+FRONTEND_PORT=5174 \
 docker compose up -d --build
 ```
 
