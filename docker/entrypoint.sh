@@ -3,8 +3,8 @@ set -eu
 
 cat >/usr/share/nginx/html/runtime-config.js <<EOF
 window.__ECHOMIND_CONFIG__ = {
-  pythonApiUrl: "${PYTHON_API_URL:-/api}",
-  javaApiUrl: "${JAVA_API_URL:-/api}"
+  pythonApiUrl: "${PYTHON_API_URL:-/api/python}",
+  javaApiUrl: "${JAVA_API_URL:-/api/java}"
 };
 EOF
 

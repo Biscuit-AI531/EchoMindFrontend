@@ -63,26 +63,19 @@ npm run dev
 
 ## Docker 部署
 
-直接构建并启动容器：
+直接构建并启动三服务：
 
 ```bash
 docker compose up -d --build
 ```
 
-如需自定义后端地址：
-
-```bash
-PYTHON_API_URL=http://your-server:8000/api/python \
-JAVA_API_URL=http://your-server:8080/api/java \
-FRONTEND_PORT=5174 \
-docker compose up -d --build
-```
-
-访问：
+访问前端：
 
 ```text
-http://localhost:5174
+http://localhost
 ```
+
+如果只想暴露前端端口，可改 `FRONTEND_PORT`，默认仍可通过 `80` 统一入口访问。
 
 停止：
 

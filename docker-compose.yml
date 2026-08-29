@@ -1,14 +1,129 @@
 services:
-  echomind-frontend:
+  echomind-python:
     build:
-      context: .
+      context: /Users/xiao_xiong/Desktop/code/EchoMind
+      dockerfile: Dockerfile
+      target: production
+    container_name: echomind-python
+    ports:
+      - "8000:8000"
+    env_file:
+      - /Users/xiao_xiong/Desktop/code/EchoMind/.env
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD:-echomind123}@redis:6379/0
+      CHROMA_PERSIST_DIRECTORY: /app/data/chroma
+      EVAL_BASELINE_PATH: /app/data/eval/baseline.json
+      ECHOMIND_SKILLS_DIR: /app/skills
+    volumes:
+      - echomind-python-data:/app/data
+      - /Users/xiao_xiong/Desktop/code/EchoMind/skills:/app/skills
+    depends_on:
+      redis:
+        condition: service_started
+      chromadb:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - echomind-network
+
+  echomind-java:
+    build:
+      context: /Users/xiao_xiong/Desktop/code/EchoMindJava
+      dockerfile: Dockerfile
+    container_name: echomind-java
+    ports:
+      - "8080:8080"
+    env_file:
+      - /Users/xiao_xiong/Desktop/code/EchoMindJava/.env
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: 8000
+      ECHOMIND_DATA_DIR: /app/data/java
+      KNOWLEDGE_STORE_PATH: /app/data/java/knowledge-store.json
+      MEMORY_STORE_PATH: /app/data/java/memory-store.json
+      ECHOMIND_SKILLS_DIR: /app/skills
+    volumes:
+      - echomind-java-data:/app/data
+      - /Users/xiao_xiong/Desktop/code/EchoMindJava/skills:/app/skills
+    depends_on:
+      redis:
+        condition: service_started
+      chromadb:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - echomind-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: echomind-redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-echomind123}
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    networks:
+      - echomind-network
+
+  chromadb:
+    image: chromadb/chroma:0.5.23
+    container_name: echomind-chromadb
+    ports:
+      - "8001:8000"
+    environment:
+      IS_PERSISTENT: "TRUE"
+      PERSIST_DIRECTORY: /chroma/chroma
+      ANONYMIZED_TELEMETRY: "FALSE"
+    volumes:
+      - chromadb-data:/chroma/chroma
+    restart: unless-stopped
+    networks:
+      - echomind-network
+
+  frontend:
+    build:
+      context: /Users/xiao_xiong/Desktop/code/EchoMindFrontend
       dockerfile: Dockerfile
     container_name: echomind-frontend
     environment:
-      PYTHON_API_URL: ${PYTHON_API_URL:-http://host.docker.internal:8000/api/python}
-      JAVA_API_URL: ${JAVA_API_URL:-http://host.docker.internal:8080/api/java}
+      PYTHON_API_URL: /api/python
+      JAVA_API_URL: /api/java
     ports:
       - "${FRONTEND_PORT:-5174}:80"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    depends_on:
+      echomind-python:
+        condition: service_started
+      echomind-java:
+        condition: service_started
     restart: unless-stopped
+    networks:
+      - echomind-network
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: echomind-gateway
+    ports:
+      - "80:80"
+    volumes:
+      - /Users/xiao_xiong/Desktop/code/EchoMindFrontend/docker/nginx-gateway.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      frontend:
+        condition: service_started
+      echomind-python:
+        condition: service_started
+      echomind-java:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - echomind-network
+
+networks:
+  echomind-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+  chromadb-data:
+  echomind-python-data:
+  echomind-java-data:
