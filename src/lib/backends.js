@@ -1,3 +1,4 @@
+import { pollEvaluation } from './evaluationJobs.js'
 const DEFAULT_BACKENDS = {
   python: {
     id: 'python',
@@ -16,6 +17,7 @@ const DEFAULT_BACKENDS = {
 export function createInitialSettings() {
   const saved = readSettings()
   return {
+    pythonToken: '',
     backend: saved.backend || import.meta.env.VITE_DEFAULT_BACKEND || 'python',
     userId: saved.userId || 'u1001',
     conversationId: saved.conversationId || '',
@@ -27,7 +29,7 @@ export function createInitialSettings() {
 }
 
 export function saveSettings(settings) {
-  localStorage.setItem('echomind.frontend.settings', JSON.stringify(settings))
+  localStorage.setItem('echomind.frontend.settings', JSON.stringify({ ...settings, pythonToken: undefined }))
 }
 
 export function backendMeta(type, settings) {
@@ -39,57 +41,79 @@ export function backendMeta(type, settings) {
 }
 
 export async function requestHealth(type, settings) {
-  return requestJson(backendMeta(type, settings).baseUrl, '/health')
+  return requestFor(type, settings, '/health')
 }
 
 export async function requestMonitor(type, settings) {
-  return requestJson(backendMeta(type, settings).baseUrl, '/monitor')
+  return requestFor(type, settings, '/monitor')
 }
 
 export async function requestSkills(type, settings) {
-  return requestJson(backendMeta(type, settings).baseUrl, '/skills')
+  return requestFor(type, settings, '/skills')
 }
 
 export async function reloadSkills(type, settings) {
-  return requestJson(backendMeta(type, settings).baseUrl, '/skills/reload', { method: 'POST' })
+  return requestFor(type, settings, '/skills/reload', { method: 'POST' })
 }
 
 export async function requestKnowledgeStats(type, settings) {
-  return requestJson(backendMeta(type, settings).baseUrl, '/knowledge/stats')
+  return requestFor(type, settings, '/knowledge/stats')
 }
 
-export async function runEvaluation(type, settings, body = null) {
-  return requestJson(backendMeta(type, settings).baseUrl, '/eval/run', {
+export async function runEvaluation(type, settings, body = null, options = {}) {
+  const taskKey = `echomind.eval:${type}:${backendMeta(type, settings).baseUrl}:${settings.userId}`
+  const savedJob = type === 'python' ? sessionStorage.getItem(taskKey) : null
+  const initial = savedJob ? {job_id: savedJob, status: 'queued', completed: 0, total: 0} : await requestFor(type, settings, '/eval/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined
   })
+  if (!initial.job_id) return initial // Java 后端仍兼容同步报告。
+  sessionStorage.setItem(taskKey, initial.job_id)
+  try {
+    const result = await pollEvaluation(initial, jobId => requestFor(type, settings,
+      `/eval/jobs/${encodeURIComponent(jobId)}`), options)
+    if (result) sessionStorage.removeItem(taskKey)
+    return result
+  } catch (error) {
+    if (error.terminal || error.status === 404) sessionStorage.removeItem(taskKey)
+    throw error
+  }
 }
 
 export async function requestSearch(type, settings, query, topK = 5) {
   const params = new URLSearchParams({ query, top_k: String(topK) })
-  return requestJson(backendMeta(type, settings).baseUrl, `/search?${params}`, { method: 'POST' })
+  return requestFor(type, settings, `/search?${params}`, { method: 'POST' })
 }
 
 export async function requestChat(type, settings, message) {
   const meta = backendMeta(type, settings)
   const payload = buildChatPayload(type, settings, message)
-  const raw = await requestJson(meta.baseUrl, '/chat', {
+  const attemptKey = JSON.stringify([type, meta.baseUrl, settings.userId, settings.conversationId, message])
+  if (type === 'python') {
+    if (!chatAttempts.has(attemptKey)) {
+      if (chatAttempts.size > 100) chatAttempts.clear()
+      chatAttempts.set(attemptKey, crypto.randomUUID())
+    }
+    payload.client_request_id = chatAttempts.get(attemptKey)
+  }
+  const raw = await requestFor(type, settings, '/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   })
+  chatAttempts.delete(attemptKey)
   return normalizeChatResponse(type, raw)
 }
 
 export async function requestToolTrace(type, settings, requestId) {
   if (!requestId) return null
-  const raw = await requestJson(backendMeta(type, settings).baseUrl, `/trace/tool/${encodeURIComponent(requestId)}`)
+  const raw = await requestFor(type, settings, `/trace/tool/${encodeURIComponent(requestId)}`)
   return normalizeToolTraceResponse(raw)
 }
 
 export async function addKnowledge(type, settings, documents) {
-  return requestJson(backendMeta(type, settings).baseUrl, '/knowledge/add', {
+  return requestFor(type, settings, '/knowledge/add', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ documents })
@@ -99,7 +123,7 @@ export async function addKnowledge(type, settings, documents) {
 export async function uploadKnowledge(type, settings, file) {
   const form = new FormData()
   form.append('file', file)
-  return requestJson(backendMeta(type, settings).baseUrl, '/knowledge/upload', {
+  return requestFor(type, settings, '/knowledge/upload', {
     method: 'POST',
     body: form
   })
@@ -153,6 +177,14 @@ function normalizeToolTraceResponse(raw) {
   }
 }
 
+const chatAttempts = new Map()
+async function requestFor(type, settings, path, options = {}) {
+  const headers = new Headers(options.headers || {})
+  if (type === 'python' && settings.pythonToken) headers.set('Authorization', `Bearer ${settings.pythonToken}`)
+  return requestJson(backendMeta(type, settings).baseUrl, path, { ...options, headers,
+    signal: options.signal || AbortSignal.timeout(path === '/chat' ? 55000 : 20000) })
+}
+
 async function requestJson(baseUrl, path, options = {}) {
   const url = `${normalizeBaseUrl(baseUrl)}${path}`
   const response = await fetch(url, options)
@@ -165,7 +197,9 @@ async function requestJson(baseUrl, path, options = {}) {
   }
   if (!response.ok) {
     const detail = typeof data === 'string' ? data : JSON.stringify(data)
-    throw new Error(`${response.status} ${response.statusText}: ${detail}`)
+    const error = new Error(`${response.status} ${response.statusText}: ${detail}`)
+    error.status = response.status
+    throw error
   }
   return data
 }
